@@ -1,6 +1,9 @@
 # twilio-signature-verify
 
+[![npm](https://img.shields.io/npm/v/twilio-signature-verify)](https://www.npmjs.com/package/twilio-signature-verify)
 [![CI](https://github.com/drewthomas00/twilio-signature-verify/actions/workflows/ci.yml/badge.svg)](https://github.com/drewthomas00/twilio-signature-verify/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/twilio-signature-verify)](https://www.npmjs.com/package/twilio-signature-verify)
+[![license](https://img.shields.io/npm/l/twilio-signature-verify)](LICENSE)
 
 Verify `X-Twilio-Signature` on inbound webhooks — **including behind a reverse proxy**, which is where most implementations quietly break.
 
@@ -137,6 +140,14 @@ npm test
 
 Node's built-in test runner — no test framework dependency. Signatures in the suite are produced by the real Twilio SDK rather than mocked, so the tests exercise the actual algorithm.
 
+## Related packages
+
+Small, dependency-light pieces pulled out of production systems I've built:
+
+- **[tcpa-quiet-hours](https://github.com/drewthomas00/tcpa-quiet-hours)** — is it legal to send this marketing message right now?
+- **[pg-cron-lease](https://github.com/drewthomas00/pg-cron-lease)** — make an in-process cron job a singleton across replicas, using Postgres
+- **[us-zip-centroids](https://github.com/drewthomas00/us-zip-centroids)** — offline US ZIP → lat/lng, no geocoder
+
 ## License
 
-MIT
+MIT © [Drew Thomas](https://drewthomasbuilds.com)
