@@ -1,0 +1,53 @@
+{
+  "name": "twilio-signature-verify",
+  "version": "1.0.0",
+  "description": "Verify X-Twilio-Signature on inbound webhooks, including behind a reverse proxy — handles TLS-terminated schemes, chained forwarded headers, rewritten Hosts, stripped path prefixes, and signed query strings. Verifier function plus Express middleware.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "errors.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "twilio",
+    "webhook",
+    "signature",
+    "express",
+    "middleware",
+    "security",
+    "reverse-proxy"
+  ],
+  "author": "Drew Thomas <drew@drewthomasbuilds.com> (https://drewthomasbuilds.com)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drewthomas00/twilio-signature-verify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drewthomas00/twilio-signature-verify/issues"
+  },
+  "homepage": "https://github.com/drewthomas00/twilio-signature-verify#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "peerDependencies": {
+    "twilio": "^5.0.0"
+  },
+  "devDependencies": {
+    "twilio": "^5.10.0"
+  }
+}
