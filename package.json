@@ -1,6 +1,6 @@
 {
   "name": "twilio-signature-verify",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Verify X-Twilio-Signature on inbound webhooks, including behind a reverse proxy — handles TLS-terminated schemes, chained forwarded headers, rewritten Hosts, stripped path prefixes, and signed query strings. Verifier function plus Express middleware.",
   "main": "index.js",
   "types": "index.d.ts",
