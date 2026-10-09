@@ -62,7 +62,7 @@ const REASONS = Object.freeze({
   BODY_NOT_PARSED: 'body_not_parsed',
   /** The URL carries `bodySHA256` but no raw body was available. */
   RAW_BODY_REQUIRED: 'raw_body_required',
-  /** The Twilio SDK threw while validating. */
+  /** The Twilio SDK threw while validating, or the request was unreadable. */
   VALIDATION_ERROR: 'validation_error',
 
   // ── Server-shaped: 500. Independent of what the caller sent.
@@ -70,7 +70,7 @@ const REASONS = Object.freeze({
   NO_AUTH_TOKEN: 'no_auth_token_configured',
   /** `getAuthToken` threw — secret store down, database unreachable. */
   TOKEN_RESOLUTION_FAILED: 'token_resolution_failed',
-  /** `pathPrefix` is malformed, or its thunk threw. */
+  /** `pathPrefix` is malformed, or its thunk or `getRawBody` threw. */
   INVALID_CONFIG: 'invalid_config',
 });
 
@@ -185,23 +185,43 @@ function resolvePrefix(pathPrefix) {
 }
 
 /**
+ * Read one request header, from Express's `req.get()` when there is one and
+ * from Node's `req.headers` otherwise, so the verifier works on a plain
+ * `http.IncomingMessage` too. Node lower-cases header names on the way in.
+ */
+function header(req, name) {
+  if (typeof req.get === 'function') return req.get(name);
+  const value = req.headers ? req.headers[name] : undefined;
+  return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * The scheme the app itself was reached on. Express derives `req.protocol`;
+ * on a plain Node request it is read off the socket.
+ */
+function directProtocol(req) {
+  if (req.protocol) return req.protocol;
+  return req.socket && req.socket.encrypted ? 'https' : 'http';
+}
+
+/**
  * Rebuild the public URL Twilio used when it signed this request.
  *
- * @param {import('express').Request} req
+ * @param {import('express').Request|import('http').IncomingMessage} req
  * @param {string} [pathPrefix] - segment a fronting proxy stripped ('' when none)
  * @param {{trustProxyHeaders?: boolean}} [opts] - set `trustProxyHeaders: false`
- *   when the app is directly exposed and no proxy sets these headers. It is
- *   not a vulnerability to trust them: an attacker who lies about the scheme
- *   or host still cannot produce a signature valid for the URL they claimed,
- *   so the only request they break is their own.
+ *   when the app is directly exposed and no proxy sets these headers. Lying
+ *   about the scheme or host cannot forge a signature, but it does let a
+ *   request Twilio signed for ANOTHER host on the same auth token (a staging
+ *   copy of this app, say) be replayed here. See the README.
  * @returns {string|null} null when there is no host to build a URL from
  */
 function reconstructUrl(req, pathPrefix = '', { trustProxyHeaders = true } = {}) {
-  const forwardedProto = trustProxyHeaders ? firstForwardedValue(req.get('x-forwarded-proto')) : '';
-  const forwardedHost = trustProxyHeaders ? firstForwardedValue(req.get('x-forwarded-host')) : '';
+  const forwardedProto = trustProxyHeaders ? firstForwardedValue(header(req, 'x-forwarded-proto')) : '';
+  const forwardedHost = trustProxyHeaders ? firstForwardedValue(header(req, 'x-forwarded-host')) : '';
 
-  const scheme = forwardedProto || req.protocol;
-  const host = forwardedHost || req.get('host');
+  const scheme = forwardedProto || directProtocol(req);
+  const host = forwardedHost || header(req, 'host');
   if (!host || !scheme) return null;
 
   // originalUrl keeps the mount path AND the query string.
@@ -217,6 +237,19 @@ function reconstructUrl(req, pathPrefix = '', { trustProxyHeaders = true } = {})
  */
 function defaultGetRawBody(req) {
   return req.rawBody !== undefined ? req.rawBody : null;
+}
+
+/**
+ * The raw body as the UTF-8 text Twilio hashed. `String()` is only right for a
+ * string or a Buffer: on any other Uint8Array it yields '123,34,…', which
+ * hashes to something else and rejects every legitimate JSON webhook.
+ */
+function rawBodyText(rawBody) {
+  if (typeof rawBody === 'string') return rawBody;
+  if (rawBody instanceof Uint8Array) {
+    return Buffer.from(rawBody.buffer, rawBody.byteOffset, rawBody.byteLength).toString('utf8');
+  }
+  return String(rawBody);
 }
 
 /**
@@ -269,6 +302,17 @@ function createTwilioSignatureVerifier({
   if (!validationEnabled()) warnDisabledOnce();
 
   return async function verifyTwilioSignature(req) {
+    try {
+      return await verifyOrThrow(req);
+    } catch (err) {
+      // The contract is "never throws", and the middleware's 403/500 split
+      // depends on it. Anything reaching here is a request this library did
+      // not expect the shape of (no `headers`, say); refuse it.
+      return { ok: false, reason: REASONS.VALIDATION_ERROR, detail: err && err.message };
+    }
+  };
+
+  async function verifyOrThrow(req) {
     if (!validationEnabled()) {
       warnDisabledOnce();
       return { ok: true, reason: REASONS.VALIDATION_DISABLED };
@@ -277,7 +321,7 @@ function createTwilioSignatureVerifier({
     // Check the header before anything expensive. `getAuthToken` may hit a
     // database or a secret manager, and this endpoint is public: without this
     // ordering every unsigned junk POST costs a round trip to the secret store.
-    const rawSignature = req.headers['x-twilio-signature'];
+    const rawSignature = (req.headers || {})['x-twilio-signature'];
     const signature = (Array.isArray(rawSignature) ? rawSignature[0] : rawSignature) || '';
     if (!signature) {
       return { ok: false, reason: REASONS.MISSING_SIGNATURE };
@@ -322,12 +366,19 @@ function createTwilioSignatureVerifier({
       return { ok: false, reason: REASONS.INVALID_SIGNATURE, detail: url };
     }
     if (usesBodyHash) {
-      const rawBody = getRawBody(req);
+      let rawBody;
+      try {
+        rawBody = getRawBody(req);
+      } catch (err) {
+        // A caller-supplied accessor that throws is our wiring, not their
+        // request: a 500, so it pages instead of reading as a forgery.
+        return { ok: false, reason: REASONS.INVALID_CONFIG, detail: `getRawBody() threw: ${err.message}` };
+      }
       if (rawBody === null || rawBody === undefined) {
         return { ok: false, reason: REASONS.RAW_BODY_REQUIRED, detail: url };
       }
       return runValidation(
-        () => twilio.validateRequestWithBody(authToken, signature, url, String(rawBody)),
+        () => twilio.validateRequestWithBody(authToken, signature, url, rawBodyText(rawBody)),
         url,
       );
     }
@@ -342,7 +393,7 @@ function createTwilioSignatureVerifier({
     const params = isPost ? (req.body || {}) : {};
 
     return runValidation(() => twilio.validateRequest(authToken, signature, url, params), url);
-  };
+  }
 }
 
 /**

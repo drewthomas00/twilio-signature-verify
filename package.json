@@ -45,7 +45,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "twilio": "^5.0.0"
+    "twilio": "^5.0.0 || ^6.0.0"
   },
   "devDependencies": {
     "twilio": "^5.10.0"

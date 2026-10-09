@@ -21,3 +21,17 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm install
       - run: npm test
+
+  # The peer range spans two SDK majors; prove the verifier against the newer
+  # one too, since the suite's signatures come from whichever SDK is installed.
+  twilio-6:
+    runs-on: ubuntu-latest
+    name: node 24 (twilio 6)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install
+      - run: npm install --no-save twilio@6
+      - run: npm test

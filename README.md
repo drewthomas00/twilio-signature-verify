@@ -72,7 +72,7 @@ The split is by set membership (`CONFIGURATION_REASONS`), not by matching reason
 
 ### As a plain function
 
-When you're not on Express, or want to log the outcome yourself:
+When you're not on Express, or want to log the outcome yourself. A plain Node `http.IncomingMessage` works: headers are read from `req.headers` and the scheme from the socket. (Parse the body into `req.body` first for a form-encoded POST.)
 
 ```js
 const { createTwilioSignatureVerifier, REASONS } = require('twilio-signature-verify');
@@ -95,10 +95,10 @@ The verifier is a pure function of the request: it never throws and it never log
 | `missing_host` | 403 | no `Host` to build a URL from |
 | `body_not_parsed` | 403 | POST with `req.body === undefined` |
 | `raw_body_required` | 403 | JSON webhook, no raw body available |
-| `validation_error` | 403 | the SDK threw |
+| `validation_error` | 403 | the SDK threw, or the request was unreadable |
 | `no_auth_token_configured` | **500** | |
 | `token_resolution_failed` | **500** | `detail` is the error message |
-| `invalid_config` | **500** | bad `pathPrefix`, or its thunk threw |
+| `invalid_config` | **500** | bad `pathPrefix`, or its thunk or `getRawBody` threw |
 
 ## Options
 
@@ -128,7 +128,9 @@ app.use(express.json({
 }));
 ```
 
-**Trusting forwarded headers is not a vulnerability here.** An attacker who lies about the scheme or host still cannot produce a signature valid for the URL they claimed, so the only request they break is their own.
+**What trusting forwarded headers does and does not allow.** Lying about the scheme or host cannot forge a signature: Twilio's HMAC covers the whole URL, and the attacker does not hold your auth token. What it *does* allow is replaying a request Twilio signed for **another host on the same auth token** — a staging copy of this app sharing the production account, say — by claiming that host in `X-Forwarded-Host`. If that matters to you, give each environment its own Twilio (sub)account, or set `trustProxyHeaders: false` when no proxy sits in front.
+
+**Signatures do not expire.** Twilio's scheme has no timestamp or nonce, so a captured request verifies for as long as the URL and auth token are unchanged — with or without a proxy. Make the handler idempotent on Twilio's own ids (`MessageSid`, `CallSid`) rather than relying on the signature to stop a replay.
 
 **`TWILIO_VALIDATE_SIGNATURES=false` disables verification** and makes your webhook publicly writable by anyone who knows the URL. It is an escape hatch for local development against a tunnel. It logs a `SECURITY:` warning at wiring time and again on first use, so it can never be a silent property of a deploy.
 

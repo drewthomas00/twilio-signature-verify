@@ -4,7 +4,9 @@
  */
 
 /**
- * Minimal shape this library reads off an Express request.
+ * Minimal shape this library reads off a request — an Express request, or a
+ * plain Node `http.IncomingMessage` (headers are then read from `headers`, and
+ * the scheme from the socket).
  *
  * Raw bodies are typed `Uint8Array` rather than `Buffer` deliberately: `Buffer`
  * would make these declarations require `@types/node`, so a consumer without it
@@ -21,8 +23,8 @@ export interface VerifiableRequest {
   rawBody?: string | Uint8Array;
   headers: Record<string, string | string[] | undefined>;
   ip?: string;
-  socket?: { remoteAddress?: string };
-  get(name: string): string | undefined;
+  socket?: { remoteAddress?: string; encrypted?: boolean };
+  get?(name: string): string | undefined;
 }
 
 export type Reason =

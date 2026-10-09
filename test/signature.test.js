@@ -502,3 +502,60 @@ describe('createTwilioSignatureMiddleware', () => {
     assert.equal(err.status, 403);
   });
 });
+
+
+describe('requests outside Express, and odd raw bodies', () => {
+  it('verifies a plain Node request that has no req.get()', async () => {
+    // The README offers the bare verifier "when you're not on Express"; a
+    // plain IncomingMessage has headers and a socket, nothing else.
+    const url = 'https://webhooks.example.com/api/messages/webhook';
+    const params = { Body: 'hi' };
+    const req = {
+      url: '/api/messages/webhook',
+      method: 'POST',
+      body: params,
+      socket: { encrypted: true },
+      headers: {
+        host: 'webhooks.example.com',
+        'x-twilio-signature': twilio.getExpectedTwilioSignature(TOKEN, url, params),
+      },
+    };
+    const verify = createTwilioSignatureVerifier({ getAuthToken: async () => TOKEN, logger: SILENT });
+    assert.deepEqual(await verify(req), { ok: true, reason: REASONS.VALID });
+  });
+
+  it('hashes a non-Buffer Uint8Array raw body as its UTF-8 text', async () => {
+    // String(new Uint8Array(...)) is '123,34,…' — a different hash, so every
+    // legitimate JSON webhook would be rejected.
+    const body = '{"event":"delivered"}';
+    const hash = crypto.createHash('sha256').update(body).digest('hex');
+    const path = `/api/messages/webhook?bodySHA256=${hash}`;
+    const signature = twilio.getExpectedTwilioSignature(TOKEN, `https://webhooks.example.com${path}`, {});
+    const verify = createTwilioSignatureVerifier({
+      getAuthToken: async () => TOKEN,
+      getRawBody: () => new TextEncoder().encode(body),
+      logger: SILENT,
+    });
+    const req = makeReq({ url: path, headers: { 'x-twilio-signature': signature, 'x-forwarded-proto': 'https' } });
+    assert.deepEqual(await verify(req), { ok: true, reason: REASONS.VALID });
+  });
+
+  it('reports a throwing getRawBody as configuration, and does not throw', async () => {
+    const path = '/api/messages/webhook?bodySHA256=abc';
+    const verify = createTwilioSignatureVerifier({
+      getAuthToken: async () => TOKEN,
+      getRawBody: () => { throw new Error('stash missing'); },
+      logger: SILENT,
+    });
+    const out = await verify(makeReq({ url: path, headers: { 'x-twilio-signature': 'sig' } }));
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, REASONS.INVALID_CONFIG);
+  });
+
+  it('never rejects, even on something that is not a request', async () => {
+    const verify = createTwilioSignatureVerifier({ getAuthToken: async () => TOKEN, logger: SILENT });
+    const out = await verify(null);
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, REASONS.VALIDATION_ERROR);
+  });
+});
