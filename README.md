@@ -39,7 +39,7 @@ strips `/sms` before your app ever sees the path. Twilio signed the URL *with* i
 
 **4. The query string got dropped.** Twilio signs the URL including its query — load-bearing for outbound-call status callbacks, where the parameters you set are part of what's signed.
 
-This library handles all four, and normalises `pathPrefix` so that `'/sms/'` and `'sms'` both work instead of silently building `//sms` or `example.comsms`.
+This library handles all four, and normalises `pathPrefix` so that `'/sms/'` and `'sms'` both work instead of silently building `/sms//webhooks/sms` or `example.comsms/webhooks/sms`.
 
 ## Usage
 
@@ -68,7 +68,7 @@ Rejections arrive at your error handler as typed errors:
 
 That distinction matters. Collapsing both into a 403 means a webhook that silently rejects *all* traffic because a secret failed to load looks identical to ordinary spam being turned away.
 
-The split is by set membership (`CONFIGURATION_REASONS`), not by matching reason strings, and only failures **no request can provoke** are in it — a missing token, a token source that threw, a malformed `pathPrefix`. Otherwise an unauthenticated stranger could manufacture 500s, and your error budget, by choosing what to send.
+The split is by set membership (`CONFIGURATION_REASONS`), not by matching reason strings, and only failures **no request can provoke** are in it — a missing token, a token source that threw, a malformed `pathPrefix`, a `getRawBody` that threw. Otherwise an unauthenticated stranger could manufacture 500s, and your error budget, by choosing what to send. That last one is yours to keep true: whether `getRawBody` is called at all is decided by the request (a `bodySHA256` in its query string), so a custom `getRawBody` must return `null` when there is no raw body, never throw.
 
 ### As a plain function
 
@@ -84,7 +84,7 @@ const verify = createTwilioSignatureVerifier({
 const { ok, reason, detail } = await verify(req);
 ```
 
-The verifier is a pure function of the request: it never throws and it never logs. `reason` is a stable value from `REASONS` you can switch on and alert on; `detail` carries the specifics — the reconstructed URL, or the underlying error message.
+The verifier is a pure function of the request: it never throws, and it logs nothing except the one-time `SECURITY:` warning when verification is disabled. `reason` is a stable value from `REASONS` you can switch on and alert on; `detail` carries the specifics — the reconstructed URL, or the underlying error message.
 
 | `reason` | Status | |
 |---|---|---|
@@ -106,7 +106,7 @@ The verifier is a pure function of the request: it never throws and it never log
 |---|---|---|
 | `getAuthToken` | `() => Promise<string\|null>` | **Required.** Async, so a rotatable token from a database or secret manager works without forking this logic. |
 | `pathPrefix` | `string \| () => string` | Segment a fronting proxy strips. Normalised to one leading slash and no trailing one. A function is re-read per request, so config can change without re-wiring. |
-| `getRawBody` | `(req) => string \| Buffer` | Only for JSON webhooks. Defaults to `req.rawBody`. |
+| `getRawBody` | `(req) => string \| Buffer \| null` | Only for JSON webhooks. Defaults to `req.rawBody`. Return `null` when there is none; don't throw. |
 | `trustProxyHeaders` | `boolean` | Default `true`. Set false when directly exposed. |
 | `logger` | `{ warn }` | Defaults to `console`. A partial logger is fine. |
 
@@ -128,11 +128,11 @@ app.use(express.json({
 }));
 ```
 
-**What trusting forwarded headers does and does not allow.** Lying about the scheme or host cannot forge a signature: Twilio's HMAC covers the whole URL, and the attacker does not hold your auth token. What it *does* allow is replaying a request Twilio signed for **another host on the same auth token** — a staging copy of this app sharing the production account, say — by claiming that host in `X-Forwarded-Host`. If that matters to you, give each environment its own Twilio (sub)account, or set `trustProxyHeaders: false` when no proxy sits in front.
+**What trusting forwarded headers does and does not allow.** Lying about the scheme or host cannot forge a signature: Twilio's HMAC covers the whole URL, and the attacker does not hold your auth token. What it *does* allow is replaying a request Twilio signed for **another host on the same auth token** — a staging copy of this app sharing the production account, say — by claiming that host in `X-Forwarded-Host`. Turning `trustProxyHeaders` off does not close this: the URL is then built from the `Host` header, which the client chooses just as freely (and which most proxies pass through). The fix is to give each environment its own auth token — a separate Twilio account or subaccount — so a signature from one never verifies at another.
 
 **Signatures do not expire.** Twilio's scheme has no timestamp or nonce, so a captured request verifies for as long as the URL and auth token are unchanged — with or without a proxy. Make the handler idempotent on Twilio's own ids (`MessageSid`, `CallSid`) rather than relying on the signature to stop a replay.
 
-**`TWILIO_VALIDATE_SIGNATURES=false` disables verification** and makes your webhook publicly writable by anyone who knows the URL. It is an escape hatch for local development against a tunnel. It logs a `SECURITY:` warning at wiring time and again on first use, so it can never be a silent property of a deploy.
+**`TWILIO_VALIDATE_SIGNATURES=false` disables verification** and makes your webhook publicly writable by anyone who knows the URL. It is an escape hatch for local development against a tunnel. It logs a `SECURITY:` warning once — when the verifier is created, or on the first request it waves through if the variable was set later — so it can never be a silent property of a deploy.
 
 ## Testing
 

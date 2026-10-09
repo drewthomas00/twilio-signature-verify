@@ -52,7 +52,11 @@ export interface VerifierOptions {
   getAuthToken: () => Promise<string | null | undefined> | string | null | undefined;
   /** Segment a fronting proxy strips before the app sees the path, e.g. '/sms'. */
   pathPrefix?: string | (() => string);
-  /** Raw request body, required only for JSON webhooks signed via bodySHA256. */
+  /**
+   * Raw request body, required only for JSON webhooks signed via bodySHA256.
+   * Return null when there is none: the request decides whether this is
+   * called, and a throw is reported as `invalid_config` (500).
+   */
   getRawBody?: (req: VerifiableRequest) => string | Uint8Array | null | undefined;
   /** Set false when the app is directly exposed and no proxy sets the headers. */
   trustProxyHeaders?: boolean;
@@ -85,7 +89,8 @@ export declare class ConfigurationError extends TwilioSignatureError {
  * Build an async verifier. Fails closed and never throws — every outcome is a
  * `{ok, reason, detail}`.
  *
- * @throws {TypeError} if `getAuthToken` is missing (a wiring bug, at boot)
+ * @throws {TypeError} if `getAuthToken` is missing or `getRawBody` is not a
+ *   function (a wiring bug, at boot)
  * @throws {ConfigurationError} if a static `pathPrefix` is malformed
  */
 export declare function createTwilioSignatureVerifier(
@@ -100,7 +105,11 @@ export declare function createTwilioSignatureMiddleware(
   opts: VerifierOptions,
 ): (req: VerifiableRequest, res: unknown, next: (err?: Error) => void) => void;
 
-/** Rebuild the public URL Twilio signed. `null` when there is no host. */
+/**
+ * Rebuild the public URL Twilio signed. `null` when there is no host.
+ *
+ * @throws {ConfigurationError} if `pathPrefix` looks like a whole URL
+ */
 export declare function reconstructUrl(
   req: VerifiableRequest,
   pathPrefix?: string,
@@ -110,7 +119,7 @@ export declare function reconstructUrl(
 /** Exactly one leading slash, no trailing one. Throws on a whole URL. */
 export declare function normalizePathPrefix(raw: string | null | undefined): string;
 
-/** False only when TWILIO_VALIDATE_SIGNATURES is the literal 'false'. */
+/** False only when TWILIO_VALIDATE_SIGNATURES is 'false' (any case, surrounding whitespace ignored). */
 export declare function validationEnabled(env?: Record<string, string | undefined>): boolean;
 
 /** Every outcome the verifier can report, keyed by name. */

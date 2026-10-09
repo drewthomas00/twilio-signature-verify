@@ -79,7 +79,7 @@ afterEach(() => {
 // ── configuration helpers ────────────────────────────────────────
 
 describe('validationEnabled', () => {
-  it('defaults on; only the literal false disables', () => {
+  it("defaults on; only 'false' (any case, trimmed) disables", () => {
     assert.equal(validationEnabled({}), true);
     assert.equal(validationEnabled({ TWILIO_VALIDATE_SIGNATURES: 'FALSE ' }), false);
     assert.equal(validationEnabled({ TWILIO_VALIDATE_SIGNATURES: '0' }), true);
@@ -94,8 +94,8 @@ describe('validationEnabled', () => {
 
 describe('normalizePathPrefix', () => {
   it('gives exactly one leading slash and no trailing one', () => {
-    // Both of these are things a person will reasonably type, and both used
-    // to produce a URL that failed to validate with no diagnostic.
+    // Both of these are things a person will reasonably type, and either one,
+    // used as given, builds a URL that fails to validate with no diagnostic.
     assert.equal(normalizePathPrefix('/sms'), '/sms');
     assert.equal(normalizePathPrefix('sms'), '/sms');
     assert.equal(normalizePathPrefix('/sms/'), '/sms');
@@ -227,7 +227,7 @@ describe('createTwilioSignatureVerifier', () => {
     req.headers['x-twilio-signature'] = sign(url, params);
 
     assert.equal((await verify(req)).reason, REASONS.INVALID_SIGNATURE);
-    current = TOKEN; // "UI rotation"
+    current = TOKEN; // the token is rotated
     assert.equal((await verify(req)).ok, true);
   });
 
@@ -257,8 +257,8 @@ describe('createTwilioSignatureVerifier', () => {
 
   it('routes by the bodySHA256 query parameter, not the substring', async () => {
     // A form webhook whose signed query merely CONTAINS 'bodySHA256' in a
-    // value is still a form webhook. Substring matching shunted it onto the
-    // body-hash path and rejected the legitimate request.
+    // value is still a form webhook. Substring matching would shunt it onto
+    // the body-hash path and reject the legitimate request.
     const url = 'http://webhooks.example.com/callbacks/status?note=xbodySHA256x';
     const req = makeReq({ url: '/callbacks/status?note=xbodySHA256x', body: params });
     req.headers['x-twilio-signature'] = sign(url, params);
@@ -333,9 +333,9 @@ describe('createTwilioSignatureVerifier', () => {
   });
 
   it('survives a logger with no warn()', async () => {
-    // The rejection log used to sit inside the try that guards the crypto, so
-    // a partial logger turned every invalid_signature into a validation_error
-    // and swallowed the one diagnostic line that matters.
+    // The rejection log must sit outside the try that guards the crypto, or a
+    // partial logger would turn every invalid_signature into a
+    // validation_error and swallow the one diagnostic line that matters.
     const req = makeReq({ body: {} });
     req.headers['x-twilio-signature'] = 'bogus';
 

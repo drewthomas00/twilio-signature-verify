@@ -32,9 +32,10 @@
  * The auth token is caller-supplied and async, so a rotatable token from a
  * database or secret manager works without forking this logic.
  *
- * The verifier itself does no logging and never throws: it is a pure function
- * of the request returning `{ok, reason, detail}`. Logging belongs to the
- * middleware, which emits exactly one line per rejection.
+ * The verifier never throws: it is a pure function of the request returning
+ * `{ok, reason, detail}`, and logs nothing but the one-time warning when
+ * verification is disabled. Logging belongs to the middleware, which emits
+ * exactly one line per rejection.
  */
 
 const twilio = require('twilio');
@@ -106,7 +107,8 @@ function readOnlySet(values) {
  * The membership test is deliberately narrow: only failures that no request
  * can provoke belong here. A reason an attacker can trigger by choosing what
  * to send must never map to a 500, or an unauthenticated stranger can
- * manufacture your error budget and your alerts.
+ * manufacture your error budget and your alerts. (A `getRawBody` that throws
+ * is INVALID_CONFIG; it is the caller's job to return null instead.)
  */
 const CONFIGURATION_REASONS = readOnlySet([
   REASONS.NO_AUTH_TOKEN,
@@ -120,7 +122,8 @@ function warn(logger, message) {
 }
 
 /**
- * Verification is on unless TWILIO_VALIDATE_SIGNATURES is the literal 'false'.
+ * Verification is on unless TWILIO_VALIDATE_SIGNATURES is 'false' (any case,
+ * surrounding whitespace ignored).
  * An escape hatch for local development against a tunnel — never set it in
  * production, where it makes your webhook publicly writable by anyone who
  * knows the URL.
@@ -213,8 +216,11 @@ function directProtocol(req) {
  *   when the app is directly exposed and no proxy sets these headers. Lying
  *   about the scheme or host cannot forge a signature, but it does let a
  *   request Twilio signed for ANOTHER host on the same auth token (a staging
- *   copy of this app, say) be replayed here. See the README.
+ *   copy of this app, say) be replayed here — through `Host` as easily as
+ *   through `X-Forwarded-Host`. Separate auth tokens per environment are the
+ *   fix. See the README.
  * @returns {string|null} null when there is no host to build a URL from
+ * @throws {ConfigurationError} if `pathPrefix` looks like a whole URL
  */
 function reconstructUrl(req, pathPrefix = '', { trustProxyHeaders = true } = {}) {
   const forwardedProto = trustProxyHeaders ? firstForwardedValue(header(req, 'x-forwarded-proto')) : '';
@@ -266,11 +272,15 @@ function rawBodyText(rawBody) {
  *   strips before the app sees the path (e.g. '/sms'); '' when none.
  * @param {(req) => string|Buffer|null} [opts.getRawBody] - raw request body,
  *   required only for JSON webhooks (Twilio signs those via `bodySHA256`).
+ *   Return null when there is none: the request decides whether this is
+ *   called, and a throw is reported as a configuration error (500).
  * @param {boolean} [opts.trustProxyHeaders=true]
  * @param {{warn?: Function}} [opts.logger] - used for the one-time warning when
  *   verification is disabled by env. The verifier does not otherwise log.
  * @returns {(req) => Promise<{ok: boolean, reason: string, detail?: string}>}
- * @throws {TypeError} if `getAuthToken` is missing — a wiring bug, at boot
+ * @throws {TypeError} if `getAuthToken` is missing or `getRawBody` is not a
+ *   function — a wiring bug, at boot
+ * @throws {ConfigurationError} if a static `pathPrefix` is malformed
  */
 function createTwilioSignatureVerifier({
   getAuthToken,
@@ -289,9 +299,9 @@ function createTwilioSignatureVerifier({
   // Fail fast on a statically-bad prefix rather than on the first webhook.
   if (typeof pathPrefix !== 'function') normalizePathPrefix(pathPrefix);
 
-  // Disabling verification makes the endpoint publicly writable. Say so at
-  // wiring time and again the first time a request is actually waved through,
-  // so it cannot be a silent property of a deploy.
+  // Disabling verification makes the endpoint publicly writable. Say so once:
+  // at wiring time, or on the first request waved through if the variable was
+  // set after wiring, so it cannot be a silent property of a deploy.
   let warnedDisabled = false;
   const warnDisabledOnce = () => {
     if (warnedDisabled) return;
